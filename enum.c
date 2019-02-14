@@ -55,6 +55,8 @@ int main(int argc, const char *argv[]) {
 	if (fd < 2)
 		return 2;
 
+	drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+
 	{
 		const drmVersionPtr ver = drmGetVersion(fd);
 		MSG("drm version %d.%d.%d driver=%.*s date=%.*s desc=%.*s",
