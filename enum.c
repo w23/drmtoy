@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 
 #define MSG(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 
@@ -97,6 +96,10 @@ int main(int argc, const char *argv[]) {
 		drmModeFreeResources(res);
 	}
 
+#define MAX_FBS 16
+	uint32_t fbs[MAX_FBS];
+	int count_fbs = 0;
+
 	drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
 	if (planes) {
 		MSG("count_planes = %u", planes->count_planes);
@@ -104,18 +107,51 @@ int main(int argc, const char *argv[]) {
 			MSG("\t%u: %#x", i, planes->planes[i]);
 			drmModePlanePtr plane = drmModeGetPlane(fd, planes->planes[i]);
 			if (plane) {
-				MSG("\tcrtc_id=%#x crtc_x=%u crtc_y=%u x=%u y=%u possible_crtcs=%#x gamma_size=%u",
-						plane->crtc_id, plane->crtc_x, plane->crtc_y, plane->x, plane->y,
+				MSG("\tcrtc_id=%#x fb_id=%#x crtc_x=%u crtc_y=%u x=%u y=%u possible_crtcs=%#x gamma_size=%u",
+						plane->crtc_id, plane->fb_id, plane->crtc_x, plane->crtc_y, plane->x, plane->y,
 						plane->possible_crtcs, plane->gamma_size);
 				MSG("\tcount_formats = %u", plane->count_formats);
 				for (uint32_t j = 0; j < plane->count_formats; ++j) {
 					const uint32_t f = plane->formats[j];
 					MSG("\t\t%u: %#x %c%c%c%c", j, f, f&0xff, (f>>8)&0xff, (f>>16)&0xff, (f>>24)&0xff);
 				}
+
+				if (plane->fb_id) {
+					int found = 0;
+					for (int k = 0; k < count_fbs; ++k) {
+						if (fbs[k] == plane->fb_id) {
+							found = 1;
+							break;
+						}
+					}
+
+					if (!found) {
+						if (count_fbs == MAX_FBS) {
+							MSG("Max number of fbs (%d) exceeded", MAX_FBS);
+						} else {
+							fbs[count_fbs++] = plane->fb_id;
+						}
+					}
+				}
 				drmModeFreePlane(plane);
 			}
 		}
 		drmModeFreePlaneResources(planes);
+	}
+
+	MSG("count_fbs = %d", count_fbs);
+	for (int i = 0; i < count_fbs; ++i) {
+		MSG("\t%d: %#x", i, fbs[i]);
+		drmModeFBPtr fb = drmModeGetFB(fd, fbs[i]);
+		if (!fb) {
+			MSG("\t\tERROR");
+			continue;
+		}
+
+		MSG("\t\twidth=%u height=%u pitch=%u bpp=%u depth=%u handle=%#x",
+			fb->width, fb->height, fb->pitch, fb->bpp, fb->depth, fb->handle);
+
+		drmModeFreeFB(fb);
 	}
 
 	close(fd);

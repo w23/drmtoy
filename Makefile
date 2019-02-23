@@ -33,6 +33,8 @@ ENUM_DEPS = $(ENUM_OBJS:%=%.d)
 run: $(OBJDIR)/enum
 	$(OBJDIR)/enum
 
+enum: $(OBJDIR)/enum
+
 $(OBJDIR)/enum: $(ENUM_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $^ $(LIBS) -o $@
