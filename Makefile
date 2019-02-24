@@ -41,3 +41,12 @@ kmsgrab: $(OBJDIR)/kmsgrab
 $(OBJDIR)/kmsgrab: $(KMSGRAB_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $^ $(LIBS) -lEGL -lX11 -o $@
+
+DRMSEND_SOURCES = drmsend.c
+DRMSEND_OBJS = $(DRMSEND_SOURCES:%=$(OBJDIR)/%.o)
+DRMSEND_DEPS = $(DRMSEND_OBJS:%=%.d)
+-include $(DRMSEND_DEPS)
+drmsend: $(OBJDIR)/drmsend
+$(OBJDIR)/drmsend: $(DRMSEND_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $^ $(LIBS) -lEGL -lX11 -o $@

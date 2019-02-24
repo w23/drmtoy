@@ -9,6 +9,10 @@
 #include <libdrm/drm_fourcc.h>
 #include <xf86drmMode.h>
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -27,7 +31,8 @@ static int width = 1280, height = 720;
 typedef struct {
 	int width, height;
 	uint32_t fourcc;
-	int fd, offset, pitch;
+	int offset, pitch;
+	int fd;
 } DmaBuf;
 
 void runEGL(const DmaBuf *img) {
@@ -201,7 +206,90 @@ exit:
 }
 
 int main(int argc, const char *argv[]) {
+#if 1
+	if (argc < 2) {
+		MSG("Usage: %s socket_filename", argv[0]);
+		return 1;
+	}
 
+	const char *sockname = argv[1];
+
+	int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+	{
+		struct sockaddr_un addr;
+		addr.sun_family = AF_UNIX;
+		if (strlen(sockname) >= sizeof(addr.sun_path)) {
+			MSG("Socket filename '%s' is too long, max %d",
+				sockname, (int)sizeof(addr.sun_path));
+			goto cleanup;
+		}
+
+		strcpy(addr.sun_path, sockname);
+		if (-1 == connect(sockfd, (const struct sockaddr*)&addr, sizeof(addr))) {
+			perror("Cannot connect to unix socket");
+			goto cleanup;
+		}
+
+		MSG("connected");
+	}
+
+	DmaBuf img = {0};
+
+	{
+		struct msghdr msg = {0};
+
+		struct iovec io = {
+			.iov_base = &img,
+			.iov_len = sizeof(img),
+		};
+		msg.msg_iov = &io;
+		msg.msg_iovlen = 1;
+
+		char cmsg_buf[CMSG_SPACE(sizeof(img.fd))];
+		msg.msg_control = cmsg_buf;
+		msg.msg_controllen = sizeof(cmsg_buf);
+		struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+		cmsg->cmsg_level = SOL_SOCKET;
+		cmsg->cmsg_type = SCM_RIGHTS;
+		cmsg->cmsg_len = CMSG_LEN(sizeof(img.fd));
+
+		MSG("recvmsg");
+		ssize_t recvd = recvmsg(sockfd, &msg, 0);
+		if (recvd <= 0) {
+			perror("cannot recvmsg");
+			goto cleanup;
+		}
+
+		MSG("Received %d", (int)recvd);
+
+		if (io.iov_len == sizeof(img) - sizeof(img.fd)) {
+			MSG("Received metadata size mismatch: %d received, %d expected",
+				(int)io.iov_len, (int)sizeof(img) - (int)sizeof(img.fd));
+			goto cleanup;
+		}
+
+		if (cmsg->cmsg_len != CMSG_LEN(sizeof(img.fd))) {
+			MSG("Received fd size mismatch: %d received, %d expected",
+				(int)cmsg->cmsg_len, (int)CMSG_LEN(sizeof(img.fd)));
+			goto cleanup;
+		}
+
+		memcpy(&img.fd, CMSG_DATA(cmsg), sizeof(img.fd));
+	}
+
+	close(sockfd);
+	sockfd = -1;
+
+	MSG("Received width=%d height=%d pitch=%u fourcc=%#x fd=%d",
+		img.width, img.height, img.pitch, img.fourcc, img.fd);
+
+	runEGL(&img);
+
+cleanup:
+	if (sockfd >= 0)
+		close(sockfd);
+	return 0;
+#else
 	uint32_t fb_id = 0;
 
 	if (argc < 2) {
@@ -262,4 +350,5 @@ cleanup:
 		drmModeFreeFB(fb);
 	close(drmfd);
 	return 0;
+#endif
 }
