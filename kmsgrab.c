@@ -1,7 +1,12 @@
 #include <X11/Xlib.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
+#define GL_GLEXT_PROTOTYPES
+#include <GL/gl.h>
+#include <GL/glext.h>
 
 #include <xf86drm.h>
+#include <libdrm/drm_fourcc.h>
 #include <xf86drmMode.h>
 
 #include <stdio.h>
@@ -17,7 +22,15 @@
 		return; \
 	}
 
-void runEGL() {
+static int width = 1280, height = 720;
+
+typedef struct {
+	int width, height;
+	uint32_t fourcc;
+	int fd, offset, pitch;
+} DmaBuf;
+
+void runEGL(const DmaBuf *img) {
 	Display *xdisp;
 	ASSERT(xdisp = XOpenDisplay(NULL));
 	eglBindAPI(EGL_OPENGL_API);
@@ -68,7 +81,7 @@ void runEGL() {
 	winattrs.override_redirect = False;
 
 	Window xwin = XCreateWindow(xdisp, RootWindow(xdisp, vinfo->screen),
-		0, 0, 1280, 720,
+		0, 0, width, height,
 		0, vinfo->depth, InputOutput, vinfo->visual,
 		CWBorderPixel | CWBitGravity | CWEventMask | CWColormap,
 		&winattrs);
@@ -96,6 +109,95 @@ void runEGL() {
 
 	ASSERT(eglMakeCurrent(edisp, esurf,
 		esurf, ectx));
+
+	MSG("%s", glGetString(GL_EXTENSIONS));
+
+	// FIXME check for EGL_EXT_image_dma_buf_import
+	EGLAttrib eimg_attrs[] = {
+		EGL_WIDTH, img->width,
+		EGL_HEIGHT, img->height,
+		EGL_LINUX_DRM_FOURCC_EXT, img->fourcc,
+		EGL_DMA_BUF_PLANE0_FD_EXT, img->fd,
+		EGL_DMA_BUF_PLANE0_OFFSET_EXT, img->offset,
+		EGL_DMA_BUF_PLANE0_PITCH_EXT, img->pitch,
+		EGL_NONE
+	};
+	EGLImage eimg = eglCreateImage(edisp, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, 0,
+		eimg_attrs);
+	ASSERT(eimg);
+
+	// FIXME check for GL_OES_EGL_image (or alternatives)
+	GLuint tex = 1;
+	//glGenTextures(1, &tex);
+	glBindTexture(GL_TEXTURE_2D, tex);
+	PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES =
+		(PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+	ASSERT(glEGLImageTargetTexture2DOES);
+	glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, eimg);
+	ASSERT(glGetError() == 0);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+	const char *fragment =
+		"#version 130\n"
+		"uniform vec2 res;\n"
+		"uniform sampler2D tex;\n"
+		"void main() {\n"
+			"vec2 uv = gl_FragCoord.xy / res;\n"
+			"uv.y = 1. - uv.y;\n"
+			"gl_FragColor = texture(tex, uv);\n"
+		"}\n"
+	;
+	int prog = ((PFNGLCREATESHADERPROGRAMVPROC)(eglGetProcAddress("glCreateShaderProgramv")))(GL_FRAGMENT_SHADER, 1, &fragment);
+	glUseProgram(prog);
+	glUniform1i(glGetUniformLocation(prog, "tex"), 0);
+
+	for (;;) {
+		while (XPending(xdisp)) {
+			XEvent e;
+			XNextEvent(xdisp, &e);
+			switch (e.type) {
+				case ConfigureNotify:
+					{
+						width = e.xconfigure.width;
+						height = e.xconfigure.height;
+					}
+					break;
+
+				case KeyPress:
+					switch(XLookupKeysym(&e.xkey, 0)) {
+						case XK_Escape:
+						case XK_q:
+							goto exit;
+							break;
+					}
+					break;
+
+				case ClientMessage:
+				case DestroyNotify:
+				case UnmapNotify:
+					goto exit;
+					break;
+			}
+		}
+
+		{
+			glViewport(0, 0, width, height);
+			glClear(GL_COLOR_BUFFER_BIT);
+
+			glUniform2f(glGetUniformLocation(prog, "res"), width, height);
+			glRects(-1, -1, 1, 1);
+
+			ASSERT(eglSwapBuffers(edisp, esurf));
+		}
+	}
+
+exit:
+	eglMakeCurrent(edisp, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+	eglDestroyContext(edisp, ectx);
+	eglDestroySurface(xdisp, esurf);
+	XDestroyWindow(xdisp, xwin);
+	eglTerminate(edisp);
+	XCloseDisplay(xdisp);
 }
 
 int main(int argc, const char *argv[]) {
@@ -140,10 +242,18 @@ int main(int argc, const char *argv[]) {
 		goto cleanup;
 	}
 
+	DmaBuf img;
+	img.width = fb->width;
+	img.height = fb->height;
+	img.pitch = fb->pitch;
+	img.offset = 0;
+	img.fourcc = DRM_FORMAT_XRGB8888; // FIXME
+
 	const int ret = drmPrimeHandleToFD(drmfd, fb->handle, 0, &dma_buf_fd);
 	MSG("drmPrimeHandleToFD = %d, fd = %d", ret, dma_buf_fd);
+	img.fd = dma_buf_fd;
 
-	runEGL();
+	runEGL(&img);
 
 cleanup:
 	if (dma_buf_fd >= 0)
