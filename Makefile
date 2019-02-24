@@ -5,7 +5,7 @@ BUILDDIR ?= build
 CC ?= cc
 CFLAGS += -Wall -Wextra -Werror
 CFLAGS += -std=gnu99 -I/usr/include/libdrm
-LIBS += -ldrm
+LIBS += -ldrm -lGL
 
 ifeq ($(DEBUG), 1)
 	CONFIG = dbg
@@ -25,16 +25,19 @@ $(OBJDIR)/%.c.o: %.c
 	$(COMPILE.c) -c $< -o $@
 
 ENUM_SOURCES = enum.c
-
 ENUM_OBJS = $(ENUM_SOURCES:%=$(OBJDIR)/%.o)
 ENUM_DEPS = $(ENUM_OBJS:%=%.d)
 -include $(ENUM_DEPS)
-
-run: $(OBJDIR)/enum
-	$(OBJDIR)/enum
-
 enum: $(OBJDIR)/enum
-
 $(OBJDIR)/enum: $(ENUM_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $^ $(LIBS) -o $@
+
+KMSGRAB_SOURCES = kmsgrab.c
+KMSGRAB_OBJS = $(KMSGRAB_SOURCES:%=$(OBJDIR)/%.o)
+KMSGRAB_DEPS = $(KMSGRAB_OBJS:%=%.d)
+-include $(KMSGRAB_DEPS)
+kmsgrab: $(OBJDIR)/kmsgrab
+$(OBJDIR)/kmsgrab: $(KMSGRAB_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $^ $(LIBS) -lEGL -lX11 -o $@
