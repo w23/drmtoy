@@ -27,6 +27,97 @@
 		return 0; \
 	}
 
+static EGLImageKHR
+create_dmabuf_egl_image(EGLDisplay egl_display, unsigned int width,
+			unsigned int height, uint32_t drm_format,
+			uint32_t n_planes, const int *fds,
+			const uint32_t *strides, const uint32_t *offsets,
+			const uint64_t *modifiers)
+{
+	EGLAttrib attribs[47];
+	int atti = 0;
+
+	/* This requires the Mesa commit in
+	 * Mesa 10.3 (08264e5dad4df448e7718e782ad9077902089a07) or
+	 * Mesa 10.2.7 (55d28925e6109a4afd61f109e845a8a51bd17652).
+	 * Otherwise Mesa closes the fd behind our back and re-importing
+	 * will fail.
+	 * https://bugs.freedesktop.org/show_bug.cgi?id=76188
+	 * */
+
+	attribs[atti++] = EGL_WIDTH;
+	attribs[atti++] = width;
+	attribs[atti++] = EGL_HEIGHT;
+	attribs[atti++] = height;
+	attribs[atti++] = EGL_LINUX_DRM_FOURCC_EXT;
+	attribs[atti++] = drm_format;
+
+	if (n_planes > 0) {
+		attribs[atti++] = EGL_DMA_BUF_PLANE0_FD_EXT;
+		attribs[atti++] = fds[0];
+		attribs[atti++] = EGL_DMA_BUF_PLANE0_OFFSET_EXT;
+		attribs[atti++] = offsets[0];
+		attribs[atti++] = EGL_DMA_BUF_PLANE0_PITCH_EXT;
+		attribs[atti++] = strides[0];
+		if (modifiers) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
+			attribs[atti++] = modifiers[0] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
+			attribs[atti++] = modifiers[0] >> 32;
+		}
+	}
+
+	if (n_planes > 1) {
+		attribs[atti++] = EGL_DMA_BUF_PLANE1_FD_EXT;
+		attribs[atti++] = fds[1];
+		attribs[atti++] = EGL_DMA_BUF_PLANE1_OFFSET_EXT;
+		attribs[atti++] = offsets[1];
+		attribs[atti++] = EGL_DMA_BUF_PLANE1_PITCH_EXT;
+		attribs[atti++] = strides[1];
+		if (modifiers) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT;
+			attribs[atti++] = modifiers[1] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT;
+			attribs[atti++] = modifiers[1] >> 32;
+		}
+	}
+
+	if (n_planes > 2) {
+		attribs[atti++] = EGL_DMA_BUF_PLANE2_FD_EXT;
+		attribs[atti++] = fds[2];
+		attribs[atti++] = EGL_DMA_BUF_PLANE2_OFFSET_EXT;
+		attribs[atti++] = offsets[2];
+		attribs[atti++] = EGL_DMA_BUF_PLANE2_PITCH_EXT;
+		attribs[atti++] = strides[2];
+		if (modifiers) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT;
+			attribs[atti++] = modifiers[2] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT;
+			attribs[atti++] = modifiers[2] >> 32;
+		}
+	}
+
+	if (n_planes > 3) {
+		attribs[atti++] = EGL_DMA_BUF_PLANE3_FD_EXT;
+		attribs[atti++] = fds[3];
+		attribs[atti++] = EGL_DMA_BUF_PLANE3_OFFSET_EXT;
+		attribs[atti++] = offsets[3];
+		attribs[atti++] = EGL_DMA_BUF_PLANE3_PITCH_EXT;
+		attribs[atti++] = strides[3];
+		if (modifiers) {
+			attribs[atti++] = EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT;
+			attribs[atti++] = modifiers[3] & 0xFFFFFFFF;
+			attribs[atti++] = EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT;
+			attribs[atti++] = modifiers[3] >> 32;
+		}
+	}
+
+	attribs[atti++] = EGL_NONE;
+
+	return eglCreateImage(egl_display, EGL_NO_CONTEXT,
+			      EGL_LINUX_DMA_BUF_EXT, 0, attribs);
+}
+
 
 typedef struct {
 	int width, height;
@@ -36,6 +127,7 @@ typedef struct {
 
 uint32_t lastGoodPlane = 0;
 
+int handle_id = 0;
 uint32_t prepareImage(const int fd, int cursor) {
 	
 	drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
@@ -51,12 +143,12 @@ uint32_t prepareImage(const int fd, int cursor) {
 			drmModePlanePtr plane = drmModeGetPlane(fd, planes->planes[i]);
 			
 			if (plane->fb_id != 0) {
-				drmModeFBPtr fb = drmModeGetFB(fd, plane->fb_id);
+				drmModeFB2Ptr fb = drmModeGetFB2(fd, plane->fb_id);
 				if (fb == NULL) {
 					//ctx->lastGoodPlane = 0;
 					continue;
 				}
-				if (fb->handle) {
+				if (fb->handles[handle_id]) {
 					// most likely cursor	
 					//MSG("%d\t%d\n", fb->width, fb->height);
 					if (cursor) {
@@ -68,7 +160,7 @@ uint32_t prepareImage(const int fd, int cursor) {
 							continue;
 					}
 				}
-				drmModeFreeFB(fb);
+				drmModeFreeFB2(fb);
 				
 				lastGoodPlane = i;
 				fb_id = plane->fb_id;
@@ -91,6 +183,7 @@ uint32_t prepareImage(const int fd, int cursor) {
 
 //static int width = 1280, height = 720;
 int main(int argc, const char *argv[]) {
+
 	//const char *card = (argc > 2) ? argv[2] : "/dev/dri/card0";
 	const char *card = "/dev/dri/card0";
 	
@@ -112,49 +205,6 @@ int main(int argc, const char *argv[]) {
 		sscanf (argv[2], "%i", &height);
 	}
 
-	MSG("Opening card %s", card);
-	const int drmfd = open(card, O_RDONLY);
-	if (drmfd < 0) {
-		perror("Cannot open card");
-		return 1;
-	}
-	drmSetClientCap(drmfd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
-	
-	const int available = drmAvailable();
-	if (!available)
-		return 0;
-	
-	
-	// Find DRM video source
-	uint32_t fb_id = prepareImage(drmfd, cursor);
-
-	if (fb_id == 0) {
-		MSG("Not found fb_id");
-		return 1;
-	}
-
-	int dma_buf_fd = -1;
-	drmModeFBPtr fb = drmModeGetFB(drmfd, fb_id);
-	if (!fb->handle) {
-		MSG("Not permitted to get fb handles. Run either with sudo, or setcap cap_sys_admin+ep %s", argv[0]);
-		
-		if (dma_buf_fd >= 0)
-			close(dma_buf_fd);
-		if (fb)
-			drmModeFreeFB(fb);
-		close(drmfd);
-		return 0;
-	}
-
-	DmaBuf img;
-	img.width = fb->width;
-	img.height = fb->height;
-	img.pitch = fb->pitch;
-	img.offset = 0;
-	img.fourcc = DRM_FORMAT_XRGB8888; // FIXME
-	drmPrimeHandleToFD(drmfd, fb->handle, 0, &dma_buf_fd);
-	img.fd = dma_buf_fd;
-
 
 	
 	// render all
@@ -163,13 +213,7 @@ int main(int argc, const char *argv[]) {
 	eglBindAPI(EGL_OPENGL_API);
 	EGLDisplay edisp = eglGetDisplay(xdisp);
 	EGLint ver_min, ver_maj;
-	eglInitialize(edisp, &ver_maj, &ver_min);
-	/*MSG("EGL: version %d.%d", ver_maj, ver_min);
-	MSG("EGL: EGL_VERSION: '%s'", eglQueryString(edisp, EGL_VERSION));
-	MSG("EGL: EGL_VENDOR: '%s'", eglQueryString(edisp, EGL_VENDOR));
-	MSG("EGL: EGL_CLIENT_APIS: '%s'", eglQueryString(edisp, EGL_CLIENT_APIS));
-	MSG("EGL: client EGL_EXTENSIONS: '%s'", eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS));
-	MSG("EGL: EGL_EXTENSIONS: '%s'", eglQueryString(edisp, EGL_EXTENSIONS));*/
+	eglInitialize(edisp, &ver_maj, &ver_min);\
 
 	static const EGLint econfattrs[] = {
 		EGL_BUFFER_SIZE, 32,
@@ -214,25 +258,6 @@ int main(int argc, const char *argv[]) {
 		&winattrs);
 	ASSERT(xwin);
 	
-	/*XSizeHints* sh = XAllocSizeHints();
-	sh->flags = PMinSize | PMaxSize;
-	sh->min_width = sh->max_width = width;
-	sh->min_height = sh->max_height = height;
-	XSetWMSizeHints(xdisp, xwin, sh, XA_WM_NORMAL_HINTS);
-	XFree(sh);*/
-	
-	/*XSizeHints* sh = XAllocSizeHints();
-	sh->flags = PPosition;
-	sh->x = 1222;
-	sh->y = 1222;
-	XSetWMSizeHints(xdisp, xwin, sh, XA_WM_NORMAL_HINTS);
-	XFree(sh);*/
-	
-	// borderless
-	/*long hints[5] = {2, 0, 0, 0, 0};
-	Atom motif_hints = XInternAtom(xdisp, "_MOTIF_WM_HINTS", False);
-
-	XChangeProperty(xdisp, xwin, motif_hints, motif_hints, 32, PropModeReplace, (unsigned char *)&hints, 5);*/
 	
 	// class window
 	XClassHint* class_hints = XAllocClassHint();
@@ -277,7 +302,7 @@ int main(int argc, const char *argv[]) {
 	//MSG("%s", glGetString(GL_EXTENSIONS));
 
 	// FIXME check for EGL_EXT_image_dma_buf_import
-	EGLAttrib eimg_attrs[] = {
+	/*EGLAttrib eimg_attrs[] = {
 		EGL_WIDTH, img.width,
 		EGL_HEIGHT, img.height,
 		EGL_LINUX_DRM_FOURCC_EXT, img.fourcc,
@@ -286,10 +311,96 @@ int main(int argc, const char *argv[]) {
 		EGL_DMA_BUF_PLANE0_PITCH_EXT, img.pitch,
 		EGL_NONE
 	};
-	EGLImage eimg = eglCreateImage(edisp, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, 0,
-		eimg_attrs);
-	ASSERT(eimg);
+	EGLImage eimg = eglCreateImage(edisp, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, 0, eimg_attrs);*/
+	
 
+	MSG("Opening card %s", card);
+	const int drmfd = open(card, O_RDONLY);
+	if (drmfd < 0) {
+		perror("Cannot open card");
+		return 1;
+	}
+	drmSetClientCap(drmfd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+	
+	const int available = drmAvailable();
+	if (!available)
+		return 0;
+	
+	
+	// Find DRM video source
+	uint32_t fb_id = prepareImage(drmfd, cursor);
+
+	if (fb_id == 0) {
+		MSG("Not found fb_id");
+		return 1;
+	}
+
+	int dma_buf_fd[4] = {-1, -1, -1, -1};
+	drmModeFB2Ptr fb = drmModeGetFB2(drmfd, fb_id);
+	if (!fb->handles[handle_id]) {
+		MSG("Not permitted to get fb handles. Run either with sudo, or setcap cap_sys_admin+ep %s", argv[0]);
+		
+		//if (dma_buf_fd >= 0)
+		//	close(dma_buf_fd);
+		if (fb)
+			drmModeFreeFB2(fb);
+		close(drmfd);
+		return 0;
+	}
+
+	//drmPrimeHandleToFD(drmfd, fb->handles[0], O_RDONLY, (dma_buf_fd + 0));
+	drmPrimeHandleToFD(drmfd, fb->handles[0], 0, (dma_buf_fd + 0));
+	drmPrimeHandleToFD(drmfd, fb->handles[1], 0, (dma_buf_fd + 1));
+	drmPrimeHandleToFD(drmfd, fb->handles[2], 0, (dma_buf_fd + 2));
+	drmPrimeHandleToFD(drmfd, fb->handles[3], 0, (dma_buf_fd + 3));
+	
+	PFNEGLQUERYDMABUFMODIFIERSEXTPROC eglQueryDmaBufModifiersEXT =
+		(PFNEGLQUERYDMABUFMODIFIERSEXTPROC)eglGetProcAddress("eglQueryDmaBufModifiersEXT");
+	
+	
+	EGLint max_modifiers;
+	if (!eglQueryDmaBufModifiersEXT(edisp, DRM_FORMAT_XRGB8888, 0, NULL,
+					     NULL, &max_modifiers)) {
+		MSG("Cannot query the number of modifiers");
+		return false;
+	}
+	EGLuint64KHR *modifier_list =
+		malloc(max_modifiers * sizeof(EGLuint64KHR));
+	EGLBoolean *external_only = NULL;
+	if (!modifier_list) {
+		MSG("Unable to allocate memory");
+		return false;
+	}
+	if (!eglQueryDmaBufModifiersEXT(edisp, DRM_FORMAT_XRGB8888,
+					     max_modifiers, modifier_list,
+					     external_only, &max_modifiers)) {
+		MSG("Cannot query a list of modifiers:");
+		free(modifier_list);
+		return false;
+	}
+	//modifier_list[0] = fb->modifier;
+	
+	if (fb->flags & DRM_MODE_FB_MODIFIERS) {
+		MSG("Modifiers supposed to work");
+		MSG("FB Modifier: %ld", fb->modifier);
+	}
+	
+	for (int i = 0; i < max_modifiers; i++)
+		MSG("Query Modifier %d = %ld", i, modifier_list[i]);
+	
+	for (int i = 0; i < max_modifiers; i++)
+		modifier_list[i] = fb->modifier;
+	
+	
+	// *modifiers = modifier_list;
+	// *n_modifiers = (EGLuint64KHR)max_modifiers;
+	
+	EGLImage eimg = create_dmabuf_egl_image(edisp, fb->width, fb->height,
+					    DRM_FORMAT_XRGB8888, 3, dma_buf_fd, fb->pitches,
+					    fb->offsets, modifier_list);
+	ASSERT(eimg);
+	
+	
 	// FIXME check for GL_OES_EGL_image (or alternatives)
 	GLuint tex = 1;
 	//glGenTextures(1, &tex);
@@ -349,53 +460,37 @@ int main(int argc, const char *argv[]) {
 
 	
 			// Find DRM video source
-			uint32_t fb_id = prepareImage(drmfd, cursor);
+			/*uint32_t fb_id = prepareImage(drmfd, cursor);
 
 			if (fb_id == 0) {
 				MSG("Not found fb_id");
 			}
 			else {
-				if (dma_buf_fd >= 0)
-					close(dma_buf_fd);
+				//if (dma_buf_fd >= 0)
+				//	close(dma_buf_fd);
 				if (fb)
-					drmModeFreeFB(fb);
+					drmModeFreeFB2(fb);
 					
-				fb = drmModeGetFB(drmfd, fb_id);
-				if (!fb->handle) {
+				fb = drmModeGetFB2(drmfd, fb_id);
+				if (!fb->handles[handle_id]) {
 					MSG("Not permitted to get fb handles. Run either with sudo, or setcap cap_sys_admin+ep %s", argv[0]);
 					
 					if (fb)
-						drmModeFreeFB(fb);
+						drmModeFreeFB2(fb);
 					close(drmfd);
 					return 0;
 				}
 
-				/*img.width = fb->width;
-				img.height = fb->height;
-				img.pitch = fb->pitch;
-				img.offset = 0;
-				img.fourcc = DRM_FORMAT_XRGB8888; // FIXME*/
-				drmPrimeHandleToFD(drmfd, fb->handle, 0, &dma_buf_fd);
-				//img.fd = dma_buf_fd;
+				drmPrimeHandleToFD(drmfd, fb->handles[handle_id], 0, &dma_buf_fd);
 				
 				eglDestroyImage(edisp, eimg);
-				/*EGLAttrib eimg_attrs[] = {
-					EGL_WIDTH, img.width,
-					EGL_HEIGHT, img.height,
-					EGL_LINUX_DRM_FOURCC_EXT, img.fourcc,
-					EGL_DMA_BUF_PLANE0_FD_EXT, img.fd,
-					EGL_DMA_BUF_PLANE0_OFFSET_EXT, img.offset,
-					EGL_DMA_BUF_PLANE0_PITCH_EXT, img.pitch,
-					EGL_NONE
-				};*/
-				//eimg_attrs[7] = img.fd;
 				eimg = eglCreateImage(edisp, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, 0,
 					eimg_attrs);
 				ASSERT(eimg);
 				
 				glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, eimg);
 			}
-			//MSG("%#x", img.fd);
+			//MSG("%#x", img.fd);*/
 			
 			// rebind texture
 			glBindTexture(GL_TEXTURE_2D, tex);
@@ -411,10 +506,10 @@ int main(int argc, const char *argv[]) {
 	}
 
 exit:
-	if (dma_buf_fd >= 0)
-		close(dma_buf_fd);
+	//if (dma_buf_fd >= 0)
+	//	close(dma_buf_fd);
 	if (fb)
-		drmModeFreeFB(fb);
+		drmModeFreeFB2(fb);
 	eglMakeCurrent(edisp, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 	eglDestroyContext(edisp, ectx);
 	eglDestroySurface(xdisp, esurf);
