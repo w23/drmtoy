@@ -50,3 +50,12 @@ drmsend: $(OBJDIR)/drmsend
 $(OBJDIR)/drmsend: $(DRMSEND_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $^ $(LIBS) -lEGL -lX11 -o $@
+
+dumbkms_SOURCES = dumbkms.c
+dumbkms_OBJS = $(dumbkms_SOURCES:%=$(OBJDIR)/%.o)
+dumbkms_DEPS = $(dumbkms_OBJS:%=%.d)
+-include $(dumbkms_DEPS)
+dumbkms: $(OBJDIR)/dumbkms
+$(OBJDIR)/dumbkms: $(dumbkms_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $^ $(LIBS) -o $@
