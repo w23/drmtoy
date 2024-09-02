@@ -5,10 +5,12 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <memory.h>
+#include <assert.h>
 #include <stdlib.h>
 
 #define MSG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #define MSGA(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#define ASSERT(a) assert(a)
 
 static void printDrmModeType(uint32_t type) {
 #define CHECK_MODE(mode) if ((type&(DRM_MODE_TYPE_##mode)) == (DRM_MODE_TYPE_##mode)) MSGA(#mode" ")
@@ -257,21 +259,49 @@ static void enumerateFbs(int fd) {
 }
 #endif
 
+static void enumerateDevices(void) {
+	const int devices_count = drmGetDevices2(0, NULL, 0);
+	MSG("Found %d devices", devices_count);
+
+	drmDevicePtr *const devices = malloc(sizeof(drmDevicePtr) * devices_count);
+	const int devices_count2 = drmGetDevices2(0, devices, devices_count);
+	ASSERT(devices_count2 == devices_count);
+
+	for (int i = 0; i < devices_count2; ++i) {
+		const drmDevicePtr dev = devices[i];
+		if (!(dev->available_nodes & (1 << DRM_NODE_PRIMARY)))
+			continue;
+
+		const char *node = dev->nodes[DRM_NODE_PRIMARY];
+		if (!node || node[0] == '\0') {
+			MSG("Device %d, avaliable_nodes report DRM_NODE_PRIMARY, but no node name is available", i);
+			continue;
+		}
+
+		MSG("Trying device %d", i);
+		DrmDevice *dd = ddOpen(node);
+		if (!dd)
+			MSG("Failed");
+		if (dd)
+			ddClose(dd);
+	}
+	
+
+	drmFreeDevices(devices, devices_count2);
+	free(devices);
+}
+
 int main(int argc, const char *argv[]) {
+	(void)argc;
+	(void)argv;
+
 	const int available = drmAvailable();
 	if (!available) {
 		MSG("libdrm is not available");
 		return 1;
 	}
 
-	const char *card = (argc > 1) ? argv[1] : "/dev/dri/card0";
+	enumerateDevices();
 
-	DrmDevice *const dd = ddOpen(card);
-	if (!dd)
-		return 2;
-
-	//enumerateFbs(dd->fd);
-
-	ddClose(dd);
 	return 0;
 }
