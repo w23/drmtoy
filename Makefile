@@ -1,6 +1,8 @@
 .SUFFIXES:
 .DEFAULT:
 
+all: enum dumbkms
+
 BUILDDIR ?= build
 CC ?= cc
 CFLAGS += -Wall -Wextra -Werror
