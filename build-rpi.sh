@@ -8,10 +8,12 @@ HOST="$1"
 PROG="$2"
 TARGET="build-rpi/rel/$PROG"
 
+ROOTFS="$HOME/opt/rpi4-rootfs"
+
 export CC="arm-linux-gnueabihf-gcc"
-export CFLAGS="-I./cross-rootfs-sel/usr/include"
-#export LIBS="-Wl,-rpath-link,./cross-rootfs-sel/usr/lib/arm-linux-gnueabihf -L./cross-rootfs-sel/usr/lib/arm-linux-gnueabihf --sysroot=./cross-rootfs-sel -B./cross-rootfs-sel/usr/lib/arm-linux-gnueabihf"
-export LIBS="-Wl,-rpath-link,./cross-rootfs-sel/usr/lib/arm-linux-gnueabihf --sysroot=./cross-rootfs-sel -B./cross-rootfs-sel/usr/lib/arm-linux-gnueabihf"
+export CFLAGS="-I${ROOTFS}/usr/include -DL_tmpnam=20"
+#export LIBS="-Wl,-rpath-link,${ROOTFS}/usr/lib/arm-linux-gnueabihf -L${ROOTFS}/usr/lib/arm-linux-gnueabihf --sysroot=${ROOTFS} -B${ROOTFS}/usr/lib/arm-linux-gnueabihf"
+export LIBS="-Wl,-rpath-link,${ROOTFS}/usr/lib/arm-linux-gnueabihf --sysroot=${ROOTFS} -B${ROOTFS}/usr/lib/arm-linux-gnueabihf"
 export BUILDDIR="build-rpi"
 
 make "$TARGET" && scp "$TARGET" "$HOST":~/tmp/ && ssh "$HOST" ~/tmp/"$PROG"
