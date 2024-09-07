@@ -7,7 +7,7 @@ BUILDDIR ?= build
 CC ?= cc
 CFLAGS += -Wall -Wextra -Werror
 CFLAGS += -std=gnu99 -I/usr/include/libdrm
-LIBS += -ldrm -lGL
+LIBS += -ldrm
 
 ifeq ($(DEBUG), 1)
 	CONFIG = dbg
