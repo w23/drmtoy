@@ -259,6 +259,7 @@ static int setMode(int fd) {
 	MSG("drmModeSetCrtc(crtc=0x%x, fb=0x%x, conn=0x%x, mode=%s) returned %d: %s",
 		crtc_id, fb.id, conn->connector_id, mode->name,
 		result, strerror(-result));
+	assert(result == 0);
 
 	MSG("Begin drawing");
 
