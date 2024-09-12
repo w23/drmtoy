@@ -9,6 +9,10 @@
 #include <stdlib.h>
 #include <ctype.h> // isprint
 
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+
 #define MSG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #define MSGA(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
 #define ASSERT(a) assert(a)
@@ -54,6 +58,91 @@ static void printDrmModeFlags(uint32_t flags) {
 	CHECK_FLAG(PIC_AR_64_27);
 	CHECK_FLAG(PIC_AR_256_135);
 #undef CHECK_FLAG
+}
+
+static void parseEdid(const u8 *data, int length) {
+	static const u8 edid_header[] = { 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 };
+	if (length < 128) {
+		MSG("\t\t\t\tedid is too short (%d), it should be at least 128 bytes", length);
+		return;
+	}
+
+	if (memcmp(edid_header, data, sizeof(edid_header)) != 0) {
+		MSG("\t\t\t\tInvalid EDID header");
+		return;
+	}
+
+	// TODO constants/definitions for all these offsets
+
+	{
+		const char manufacturer_name[3] = {
+			'A' + ((data[0x08] >> 2) & 0x1f) - 1,
+			'A' + (((data[0x08] << 3) | (data[0x09] >> 5)) & 0x1f) - 1,
+			'A' + (data[0x09] & 0x1f) - 1,
+		};
+		MSG("\t\t\t\tID Manufacturer Name: %.3s", manufacturer_name);
+
+		u16 product_code;
+		memcpy(&product_code, data + 0x0A, 2);
+		MSG("\t\t\t\tID Product Code: %u", product_code);
+
+		u32 serial_number;
+		memcpy(&serial_number, data + 0x0C, 4);
+
+		MSG("\t\t\t\tID Serial Number: %u", serial_number);
+
+		// Note that this is not correct for all cases, some bit combinations mean different things for these fields
+		MSG("\t\t\t\tWeek of Manufacture: %u", data[0x10]);
+		MSG("\t\t\t\tYear of Manufacture: %u", 1990 + data[0x11]);
+	}
+
+	MSG("\t\t\t\tEDID version: %u.%u", data[0x12], data[0x13]);
+
+	// TODO
+	MSG("\t\t\t\tVideo Input Definition bits: 0x%02x", data[0x14]);
+
+	if (data[0x16] != 0) {
+		MSG("\t\t\t\tScreen Size: %ucm x %ucm", data[0x15], data[0x16]);
+	} else {
+		// TODO aspect ratio?
+	}
+
+	if (data[0x17] != 0xff) {
+		MSG("\t\t\t\tGamma : %u.%u", 1 + data[0x17] / 100, data[0x17] % 100);
+	}
+
+	// TODO
+	MSG("\t\t\t\tFeature Support bits: 0x%02x", data[0x18]);
+
+	// TODO color characteristics
+
+	// Detailed Timing Descriptors
+	for (int i = 0; i < 4; ++i) {
+		int offset = 0x36 + i * 0x12;
+		u16 pixel_clock;
+		memcpy(&pixel_clock, data + offset, 2);
+		MSG("\t\t\t\tDetailed Timings Descriptor #%d, pixel_clock = %d", i, pixel_clock);
+		if (0 == pixel_clock) {
+			// Display Descriptor
+			const u8 tag = data[offset + 3];
+			MSG("\t\t\t\t\tTag = 0x%02x", tag);
+			// TODO parse out string properly
+			switch (tag) {
+				case 0xff:
+					MSG("\t\t\t\t\t\tProduct Serial Number: %.13s", data + offset + 5);
+					break;
+				case 0xfe:
+					MSG("\t\t\t\t\t\tData String: %.13s", data + offset + 5);
+					break;
+				case 0xfc:
+					MSG("\t\t\t\t\t\tDisplay Product Name: %.13s", data + offset + 5);
+					break;
+			}
+		} else {
+			// TODO detailed timings definitions
+		}
+
+	}
 }
 
 static void enumerateModeResources(int fd, const drmModeResPtr res) {
@@ -147,6 +236,10 @@ static void enumerateModeResources(int fd, const drmModeResPtr res) {
 								MSGA(" %02x", byte);
 							}
 							MSG("");
+						}
+						if (strcmp("EDID", prop->name) == 0) {
+							MSG("\t\t\tLooks like EDID to me:");
+							parseEdid(blob->data, blob->length);
 						}
 						drmModeFreePropertyBlob(blob);
 					}
