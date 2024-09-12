@@ -1,12 +1,13 @@
-//#!cc -Werror -std=c99 -I/usr/include/libdrm -ldrm enum.c -o enum && ./enum /dev/dri/card0
 #include <xf86drm.h>
 #include <xf86drmMode.h>
+#include <drm.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <memory.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <ctype.h> // isprint
 
 #define MSG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 #define MSGA(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
@@ -92,6 +93,7 @@ static void enumerateModeResources(int fd, const drmModeResPtr res) {
 			conn->encoder_id, conn->connector_type, conn->connector_type_id, conn->connection, conn->mmWidth, conn->mmHeight,
 			conn->subpixel, conn->count_modes, conn->count_props, conn->count_encoders);
 
+		// Print modes
 		for (int j = 0; j < conn->count_modes; ++j) {
 			drmModeModeInfoPtr m = &conn->modes[j];
 			MSGA("\t\t.mode[%d] = %ux%u@%u .name=%s .clock=%ukHz .flags=(%x)",
@@ -100,7 +102,58 @@ static void enumerateModeResources(int fd, const drmModeResPtr res) {
 			MSGA(".type=(%u)", m->type);
 			printDrmModeType(m->type);
 			MSG("");
-		}
+		} // for modes
+
+		// Print properties
+		{
+			for(int j = 0; j < conn->count_props; ++j) {
+				const uint32_t prop_id = conn->props[j];
+				const uint64_t prop_value_id = conn->prop_values[j];
+				MSGA("\t\t.prop[%d] = prop_id=0x%x prop_value=0x%llx ",
+					j, prop_id, (unsigned long long)prop_value_id);
+				drmModePropertyPtr prop = drmModeGetProperty(fd, conn->props[j]);
+				MSGA("name=\"%s\" flags=", prop->name);
+#define X(flag) if (prop->flags & DRM_MODE_PROP_##flag) MSGA("%s ", #flag)
+				X(PENDING);
+				X(RANGE);
+				X(IMMUTABLE);
+				X(ENUM);
+				X(BLOB);
+				X(BITMASK);
+				X(OBJECT);
+				X(SIGNED_RANGE);
+				X(ATOMIC);
+#undef X
+				MSG("(%x) count_values=%d count_enums=%d count_blobs=%d",
+						prop->flags, prop->count_values, prop->count_enums, prop->count_blobs);
+				if (prop->flags & DRM_MODE_PROP_BLOB) {
+					drmModePropertyBlobPtr blob = drmModeGetPropertyBlob(fd, prop_value_id);
+					if (!blob) {
+						MSG("\t\t\tblob NULL ?!");
+					} else {
+						MSG("\t\t\tblob length=%u bytes=%p:", blob->length, blob->data);
+						const unsigned char *const bytes = blob->data;
+						for (uint32_t i = 0; i < blob->length; i += 16) {
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+							const uint32_t line = i + MIN(16, blob->length - i);
+							MSGA("\t\t\t\t");
+							for (uint32_t j = i; j < line; ++j) {
+								const uint8_t byte = bytes[j];
+								MSGA("%c", isprint(byte) ? byte : '.');
+							}
+							//MSGA("\t");
+							for (uint32_t j = i; j < line; ++j) {
+								const uint8_t byte = bytes[j];
+								MSGA(" %02x", byte);
+							}
+							MSG("");
+						}
+						drmModeFreePropertyBlob(blob);
+					}
+				} // if blob
+				drmModeFreeProperty(prop);
+			} // for properties
+		} // print properties
 
 		drmModeFreeConnector(conn);
 	}
@@ -285,7 +338,6 @@ static void enumerateDevices(void) {
 		if (dd)
 			ddClose(dd);
 	}
-	
 
 	drmFreeDevices(devices, devices_count2);
 	free(devices);
